@@ -409,7 +409,7 @@ path T0 — free and fully deterministic. Feasibility and risk in `DET-15`.
 | CONN-22 | configured working directory is applied to the spawned server | T0 | plan |
 | CONN-23 | streamable HTTP: `Mcp-Session-Id` captured and echoed on later requests | T0 | impl |
 | CONN-24 | HTTP: `Accept` includes `application/json` and `text/event-stream` | T0 | impl |
-| CONN-25 | legacy SSE transport connects and completes a tool call | T1 | impl (verified) |
+| CONN-25 | legacy SSE transport: stream opens, endpoint event delivered, handshake completes | T0 | impl (verified) |
 | CONN-26 | static auth header is sent on `initialize` **and** every later request | T0 | impl |
 | CONN-27 | multiple header flags all applied | T0 | plan |
 | CONN-28 | `${VAR}` expansion inside a header value | T0 | plan |
@@ -570,9 +570,13 @@ parametrized fault catalogue including the two cases that are most often
 conflated in MCP clients — a tool that *reports* failure (`isError: true`) and a
 tool call that *fails at the protocol level* (a JSON-RPC error object).
 
-**Breadth areas.** Q1 is implemented for stdio and streamable HTTP including
-static-header auth and the OAuth *discovery* sequence; legacy SSE and the
-interactive half of OAuth are specified, not implemented. Q4 is implemented as
+**Breadth areas.** Q1 is implemented for all three transports: stdio;
+streamable HTTP, including static-header auth and the OAuth *discovery*
+sequence; and legacy HTTP+SSE (`CONN-25`, verified keyless — the client opens
+the stream, consumes the endpoint event and completes the handshake). What is
+still specified rather than implemented in Q1 is the interactive half of OAuth,
+which needs a browser redirect, and a *tool call* carried over SSE as opposed to
+a connection over it. Q4 is implemented as
 properties of the harness rather than as test cases. Q5 ships the conformance
 matrix plus spot tests for the claims that would most embarrass a release —
 isolation, process leaks, permission gating, secret hygiene.
@@ -598,33 +602,50 @@ runs network-dependent); interactive TUI behaviour (no stable headless surface);
 load testing beyond the leak checks; anything asserting model answer quality.
 
 
-### Verification status of the model tier
+### Verification status of both tiers
 
-The keyless tier has been run and is green. The model tier is written, compiles
-under its build tag, and skips cleanly when no key is present, but **it has not
-yet been executed against a live model**, because the environment it was
-written in had no `ANTHROPIC_API_KEY`. Its rows are marked
-`impl (T1, awaiting a live run)` rather than `impl`, and they stay that way
-until a real run confirms them.
+Both tiers have been run. The keyless tier is green and needs no key
+(`tests/errors` 28s, `tests/protocol` 2s). The model tier was executed against
+a live model on 2026-10-22 (Haiku, 16 sessions, ~$0.02): **15 of 16 passed, and
+the one failure is a client defect rather than a test defect** — §0.5 records it
+in full. Rows that run confirmed carry `impl (verified)`; rows that are written
+and compile but have not yet been executed against a live model stay at a plain
+`impl`.
 
-Two things could plausibly be wrong until then, and both are cheap to fix:
+The two things that could plausibly have been wrong before that run were both
+settled by it:
 
-1. **The namespaced tool name.** Recon established the `mcp__<server>__<tool>`
-   shape, and the tests assert the `mcp__` prefix plus the server and tool names
-   as fragments rather than an exact string, so a different separator would fail
-   loudly with the actual name in the message rather than being silently wrong.
-2. **Whether the model actually calls the tool** for each prompt. The prompts
-   are imperative and the allow-list is narrowed to one tool, but this is the
-   probabilistic part of the suite by nature. Each fault row fails with "the
-   client never issued tools/call, so this row proves nothing" rather than
-   passing vacuously, which is the behaviour that matters: a tool-fault test
-   that silently stops exercising the fault is worse than one that fails.
+1. **The namespaced tool name** is `mcp__<server>__<tool>`, as recon predicted,
+   and the server receives the unmangled name, so the mangling does not leak
+   onto the wire. The tests assert the prefix and the two names as fragments
+   rather than an exact string, so a future separator change fails loudly with
+   the actual name in the message instead of passing on a technicality.
+2. **The model does call the tool.** Every session reached `tools/call`, with one
+   `ToolSearch` turn ahead of it. This stays the probabilistic part of the suite
+   by nature, so each fault row fails with "the client never issued tools/call,
+   so this row proves nothing" rather than passing vacuously — a tool-fault test
+   that silently stops exercising its fault is worse than one that fails.
+
+Two questions the run left open. Both are one `./run.sh t1` away, and both are
+noted here rather than quietly marked done:
+
+1. **`ERR-17` has not run in its restructured form.** It now asserts that
+   `MCP_TOOL_TIMEOUT=15000` bounds a hanging tool. If that variable turns out
+   not to be honoured either, the finding hardens from "no usable default" to
+   "no tool timeout at any setting", and `ERR-17` joins `ERR-17b` as a second
+   characterization.
+2. **`TOOL-22` is inconclusive.** It logs the raw `tool_result` envelope now, so
+   the next run separates real truncation from this suite's own content
+   flattening. Until then the row claims no truncation behaviour.
 
 ## 5. Known limits
 
 - `CONN-34` full OAuth may yet be reachable headlessly via `--callback-port`
   and a fixture authorization server; if it is not, coverage stops at the
   redirect boundary and the README says so plainly.
+- `CONN-25` proves the legacy SSE *connection*; a tool call carried over SSE is
+  not exercised, so stdio and streamable HTTP are the two transports with
+  end-to-end tool-call evidence behind them.
 - Model-tier tests remain probabilistic until `DET-15` lands; they are reported
   as rates, with the deterministic tier carrying the coverage weight.
 - Behaviour is pinned to 2.1.296. Newer versions are already published, so the
