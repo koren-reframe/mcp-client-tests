@@ -11,6 +11,7 @@ package toolcall
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -55,9 +56,6 @@ func toolFaults() []toolFault {
 		// The server dies or stops answering mid-call.
 		{id: "ERR-12", mode: "crash_on_call", wantCall: true, wantSurfaced: true,
 			why: "server exits during tools/call"},
-		{id: "ERR-17", mode: "hang_tool", wantCall: true, wantSurfaced: true,
-			maxDur: 240 * time.Second,
-			why:    "no answer to tools/call must time out rather than hang the session"},
 
 		// Results the client cannot make sense of. Left as characterizations
 		// because no public contract says what must happen.
@@ -123,6 +121,96 @@ func TestToolFaultCatalogue(t *testing.T) {
 				c.id, c.mode, len(calls), r.Dur.Round(time.Millisecond), surfaced, how)
 		})
 	}
+}
+
+// TestERR17_HangingToolIsBoundedByConfig is the regression test for a hanging
+// tool, and it is deliberately the configured case rather than the default one.
+//
+// Background, from the run that produced this test: a tool that never answers
+// tools/call did NOT time out. The session was still running after four
+// minutes, with the call confirmed delivered to the server and no reply, and
+// had to be killed. The connect path does bound itself — about 28s by default,
+// and MCP_TIMEOUT moves it — so the asymmetry is specific to tool calls.
+//
+// This test therefore checks the mechanism that should contain the problem:
+// with MCP_TOOL_TIMEOUT set, a hanging tool must abort well inside it. If that
+// env var is not honoured either, this fails and the conclusion hardens from
+// "no usable default" to "no tool timeout at any setting", which is worth
+// knowing precisely.
+func TestERR17_HangingToolIsBoundedByConfig(t *testing.T) {
+	const toolTimeoutMS = 15000
+
+	e := harness.New(t)
+	e.Extra = map[string]string{"MCP_TOOL_TIMEOUT": fmt.Sprint(toolTimeoutMS)}
+	e.AddStdio(srv, "hang_tool")
+
+	tool := harness.MCPToolName(srv, "echo_nonce")
+	r, run := e.Prompt(fmt.Sprintf(
+		"Call the %s tool with text \"fault-probe\". Report what happened in one short line.", tool),
+		harness.PromptOpts{AllowTools: []string{tool}, Timeout: 120 * time.Second})
+
+	// Proof the fault applied: the call must have reached the server, which
+	// then said nothing.
+	calls := e.Frames().ToolCalls()
+	if len(calls) == 0 {
+		t.Fatalf("ERR-17: the client never issued tools/call, so nothing was tested. Tools used = %v",
+			run.ToolNames())
+	}
+
+	if r.TimedOut {
+		t.Fatalf("ERR-17: MCP_TOOL_TIMEOUT=%dms did not bound a hanging tool — the session ran for "+
+			"%s and had to be killed. A tool that never replies can therefore hang a session "+
+			"indefinitely at any setting, which is the finding this test exists to report.",
+			toolTimeoutMS, r.Dur)
+	}
+
+	// Generous: the client may retry or wrap the timeout in a turn of its own.
+	if limit := 90 * time.Second; r.Dur > limit {
+		t.Errorf("ERR-17: session took %s with MCP_TOOL_TIMEOUT=%dms, expected to resolve within %s",
+			r.Dur.Round(time.Second), toolTimeoutMS, limit)
+	}
+	if surfaced, how := errorSurfaced(run); !surfaced {
+		t.Errorf("ERR-17: the tool timeout was not surfaced to the model (%s). final text: %s",
+			how, truncate(run.FinalText(), 300))
+	} else {
+		t.Logf("ERR-17: bounded at %s by MCP_TOOL_TIMEOUT=%dms, surfaced via %s",
+			r.Dur.Round(time.Millisecond), toolTimeoutMS, how)
+	}
+}
+
+// TestERR17b_NoDefaultToolTimeout records the defect itself: with nothing
+// configured, a hanging tool is not bounded at all.
+//
+// It asserts that the bad behaviour is still present, which is an unusual thing
+// to write and needs saying plainly: this is a characterization test, not an
+// endorsement. If the client gains a default tool timeout, this test fails and
+// tells you to re-baseline it — which is exactly the notification we want.
+//
+// Opt-in, because proving a known hang costs most of two minutes per run.
+func TestERR17b_NoDefaultToolTimeout(t *testing.T) {
+	if os.Getenv("SUITE_SLOW") == "" {
+		t.Skip("slow characterization: set SUITE_SLOW=1 to re-verify the missing default tool timeout")
+	}
+	const budget = 100 * time.Second
+
+	e := harness.New(t)
+	e.AddStdio(srv, "hang_tool")
+
+	tool := harness.MCPToolName(srv, "echo_nonce")
+	r, run := e.Prompt(fmt.Sprintf("Call the %s tool with text \"fault-probe\".", tool),
+		harness.PromptOpts{AllowTools: []string{tool}, Timeout: budget})
+
+	if len(e.Frames().ToolCalls()) == 0 {
+		t.Fatalf("ERR-17b: the client never issued tools/call; tools used = %v", run.ToolNames())
+	}
+	if !r.TimedOut {
+		t.Errorf("ERR-17b: the client now bounds a hanging tool without configuration, "+
+			"finishing in %s. That is an improvement on the recorded baseline — re-baseline this "+
+			"test and the README note about it.", r.Dur.Round(time.Second))
+		return
+	}
+	t.Logf("ERR-17b: confirmed — no default bound; still running after %s with the call delivered "+
+		"and unanswered.", budget)
 }
 
 // TestERR27_OneBrokenServerDoesNotBreakTheOthers is the single most important

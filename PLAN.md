@@ -192,6 +192,65 @@ The T0 configuration path is therefore `claude mcp add` followed by
 `claude mcp list`, which is a fair surface to test: it is how a user configures
 a server, and it exercises persistence, scope and the health check together.
 
+### 0.5 Findings from the first live model run (2026-10-22, Haiku, 16 sessions, ~$0.02)
+
+15 of 16 model-tier tests passed. The failure is a client defect, not a test
+defect, and it is the most useful thing the suite has produced so far.
+
+**A hanging tool is not bounded (ERR-17).** A server that receives `tools/call`
+and never answers leaves the session running indefinitely. The run was still
+going after **four minutes** and had to be killed. The transcript proves the
+fault applied: the call arrived with the right name and arguments, and the
+fixture then said nothing. The contrast with the connect path is sharp —
+connecting bounds itself at about 28s, and `MCP_TIMEOUT` moves that
+(5000 → 3s, 60000 → 57s, verified at T0) — so the asymmetry is specific to
+tool calls. The test was restructured around this: `ERR-17` now checks that
+`MCP_TOOL_TIMEOUT` contains the problem, and `ERR-17b` is an opt-in
+characterization that asserts the missing default is *still* missing, so that a
+future fix fails the test and asks to be re-baselined.
+
+**Malformed tool results are accepted silently (ERR-18, ERR-19).** A result with
+no `content` field, and a result containing invalid UTF-8, both produced
+`surfaced=false`: no `is_error`, no error in the result event, no mention of
+failure in the text. The session completed as though the call had succeeded. A
+tool failure presented as success is worse than a loud one, because the model
+builds on it. Both rows are characterizations, so the suite is green, but these
+are the two results worth raising with the team after the hang.
+
+**The permission layer works by omission, not refusal (TOOL-17, RDY-02).** With
+`--disallowedTools`, the tool is removed from the model's visible set entirely —
+the reply was *"BLOCKED. `mcp__srv__echo_nonce` isn't among the available
+tools"*. Nothing reached the server, which is what the row asserts, but the
+mechanism is narrower than "the permission layer refused a call": the model is
+never offered the tool, so it cannot try. Conversely `--allowedTools` does *not*
+narrow the visible set — all 21 built-ins stayed advertised alongside the MCP
+tools.
+
+**Every session spends a turn on `ToolSearch` before reaching the MCP tool**
+(`turns=3` throughout, `tools_used=[ToolSearch mcp__srv__echo_nonce]`). That
+makes `--restricted` (`DET-16`) a real lever on both cost and non-determinism
+rather than a theoretical one, and it is the first thing to try if the model
+tier ever gets flaky.
+
+**`tools/call` carries `_meta` the spec does not require**:
+`{"claudecode/toolUseId": "toolu_…", "progressToken": 2}`. The client is asking
+for progress notifications, which makes `RDY-19` concretely testable — a fixture
+mode that emits progress against that token.
+
+**Confirmed as planned**: namespacing is `mcp__<server>__<tool>` and the server
+receives the unmangled name, so the mangling does not leak onto the wire.
+Argument fidelity was exact across all six JSON types
+(`arr:[1,2,3] b:true e:"beta" i:42 obj:{inner:"nested"} s:"hello"`) with the
+optional argument omitted rather than nulled. Isolation holds: with a broken
+sibling the init event reported `{broken: failed, healthy: connected}` and the
+healthy tool worked end to end.
+
+**Still inconclusive**: `TOOL-22` logged a tool result flattened to 1 and 1536
+bytes against 1 MiB sent. The 1-byte figure is most likely this suite's own
+content flattening rendering a non-text block as nothing, not the client
+delivering one byte, so no truncation behaviour is claimed. The test now logs
+the raw envelope so the next run settles it.
+
 ---
 
 ## 1. Architecture
@@ -376,28 +435,28 @@ path T0 — free and fully deterministic. Feasibility and risk in `DET-15`.
 
 | ID | Test | Tier | Status |
 |---|---|---|---|
-| TOOL-01 | nonce round trip: run-unique nonce from the tool appears in final output | T1 | impl (T1, awaiting a live run) |
-| TOOL-02 | transcript contains exactly one `tools/call` for the target tool | T1 | impl (T1, awaiting a live run) |
-| TOOL-03 | `params.name` is the server-side (unmangled) tool name | T1 | impl (T1, awaiting a live run) |
-| TOOL-04 | `params.arguments` carries required args with exact expected values | T1 | impl (T1, awaiting a live run) |
-| TOOL-05 | client event stream contains a `tool_use` block named `mcp__<server>__<tool>` | T1 | impl (T1, awaiting a live run) |
-| TOOL-06 | that `tool_use` id correlates with a returned `tool_result` block | T1 | impl (T1, awaiting a live run) |
-| TOOL-07 | three-witness cross-check: client event, server frame and side effect agree | T1 | impl (T1, awaiting a live run) |
-| TOOL-08 | side-effect witness: tool writes a file; content matches | T1 | impl (T1, awaiting a live run) |
-| TOOL-09 | JSON-RPC request ids are unique within a session | T0 | impl (T1, awaiting a live run) |
-| TOOL-10 | text result content is delivered into model context verbatim | T1 | impl (T1, awaiting a live run) |
-| TOOL-11 | typed args survive: string, int, bool, enum, array, nested object | T1 | impl (T1, awaiting a live run) |
-| TOOL-12 | omitted optional args do not arrive as `null` | T1 | impl (T1, awaiting a live run) |
+| TOOL-01 | nonce round trip: run-unique nonce from the tool appears in final output | T1 | impl (verified) |
+| TOOL-02 | transcript contains exactly one `tools/call` for the target tool | T1 | impl (verified) |
+| TOOL-03 | `params.name` is the server-side (unmangled) tool name | T1 | impl (verified) |
+| TOOL-04 | `params.arguments` carries required args with exact expected values | T1 | impl (verified) |
+| TOOL-05 | client event stream contains a `tool_use` block named `mcp__<server>__<tool>` | T1 | impl (verified) |
+| TOOL-06 | that `tool_use` id correlates with a returned `tool_result` block | T1 | impl (verified) |
+| TOOL-07 | three-witness cross-check: client event, server frame and side effect agree | T1 | impl (verified) |
+| TOOL-08 | side-effect witness: tool writes a file; content matches | T1 | impl (verified) |
+| TOOL-09 | JSON-RPC request ids are unique within a session | T0 | impl (verified) |
+| TOOL-10 | text result content is delivered into model context verbatim | T1 | impl (verified) |
+| TOOL-11 | typed args survive: string, int, bool, enum, array, nested object | T1 | impl (verified) |
+| TOOL-12 | omitted optional args do not arrive as `null` | T1 | impl (verified) |
 | TOOL-13 | characterize: are extra/hallucinated args forwarded or stripped | T1 | plan: needs a prompt that reliably provokes an extra argument |
 | TOOL-14 | two sequential calls in one session are both recorded, in order | T1 | plan: two calls to the *same* server in order; TOOL-15 covers two servers |
-| TOOL-15 | tools on two different servers route to the correct server | T1 | impl (T1, awaiting a live run) |
+| TOOL-15 | tools on two different servers route to the correct server | T1 | impl (verified) |
 | TOOL-16 | identical tool name on two servers resolves unambiguously | T0 | plan |
-| TOOL-17 | a tool outside the allow-list is never called | T1 | impl (T1, awaiting a live run) |
+| TOOL-17 | a tool outside the allow-list is never called | T1 | impl (verified: enforced by removing the tool from the model's visible set) |
 | TOOL-18 | structured/JSON result content returned intact | T1 | plan |
 | TOOL-19 | image content block in a result is handled | T1 | plan |
 | TOOL-20 | embedded-resource content block is handled | T1 | plan |
-| TOOL-21 | unicode, emoji and CJK survive args and results unchanged | T1 | impl (T1, awaiting a live run) |
-| TOOL-22 | oversized result (≥1 MB) truncation behaviour characterized | T1 | impl (T1, awaiting a live run) |
+| TOOL-21 | unicode, emoji and CJK survive args and results unchanged | T1 | impl (verified) |
+| TOOL-22 | oversized result (≥1 MB) truncation behaviour characterized | T1 | impl: inconclusive, re-run pending (§0.5) |
 | TOOL-23 | ANSI/control characters in a result are not interpreted as terminal control | T0 | plan |
 | TOOL-24 | 60+ advertised tools are all exposed, none silently dropped | T0 | impl |
 | TOOL-25 | multi-kilobyte tool description passes through | T0 | plan |
@@ -412,7 +471,7 @@ path T0 — free and fully deterministic. Feasibility and risk in `DET-15`.
 | ERR-01 | server binary does not exist → clear error, CLI continues, no hang | T0 | impl |
 | ERR-02 | server exits non-zero before `initialize` | T0 | impl |
 | ERR-03 | server exits 0 immediately | T0 | impl |
-| ERR-04 | server never answers `initialize` → connect timeout within bound | T0 | impl |
+| ERR-04 | server never answers `initialize` → connect timeout, configurable via `MCP_TIMEOUT` | T0 | impl (verified: MCP_TIMEOUT honoured, 5000 → 3s) |
 | ERR-05 | server writes plain log lines to stdout (stdout pollution) | T0 | impl |
 | ERR-06 | server writes valid JSON that is not JSON-RPC | T0 | impl |
 | ERR-07 | truncated/malformed frame mid-session | T0 | impl |
@@ -420,14 +479,14 @@ path T0 — free and fully deterministic. Feasibility and risk in `DET-15`.
 | ERR-09 | unknown notification → ignored, session survives | T0 | impl |
 | ERR-10 | unknown fields in `initialize` result → ignored (forward compatibility) | T0 | impl |
 | ERR-11 | server crashes after initialize, before `tools/list` | T0 | impl |
-| ERR-12 | server crashes mid tool call → error surfaced, session survives | T1 | impl (T1, awaiting a live run) |
-| ERR-13 | tool result with `isError: true` → reaches model as a tool error | T1 | impl (T1, awaiting a live run) |
-| ERR-14 | `tools/call` answered with JSON-RPC `-32602` invalid params | T1 | impl (T1, awaiting a live run) |
-| ERR-15 | `tools/call` answered with `-32601` method not found | T0 | impl (T1, awaiting a live run) |
-| ERR-16 | `tools/call` answered with `-32603` internal error | T1 | impl (T1, awaiting a live run) |
-| ERR-17 | tool hangs → tool timeout fires, session survives | T1 | impl (T1, awaiting a live run) |
-| ERR-18 | result missing `content` / wrong shape → handled cleanly | T1 | impl (T1, awaiting a live run) |
-| ERR-19 | non-UTF8 bytes in a result | T0 | impl: characterized, not demanded |
+| ERR-12 | server crashes mid tool call → error surfaced, session survives | T1 | impl (verified) |
+| ERR-13 | tool result with `isError: true` → reaches model as a tool error | T1 | impl (verified) |
+| ERR-14 | `tools/call` answered with JSON-RPC `-32602` invalid params | T1 | impl (verified) |
+| ERR-15 | `tools/call` answered with `-32601` method not found | T0 | impl (verified) |
+| ERR-16 | `tools/call` answered with `-32603` internal error | T1 | impl (verified) |
+| ERR-17 | tool hangs → session must be bounded, not hang indefinitely | T1 | impl: **finding** — no default bound; now tested via MCP_TOOL_TIMEOUT, see §0.5 |
+| ERR-18 | result missing `content` / wrong shape → handled cleanly | T1 | impl: **finding** — not surfaced as an error at all |
+| ERR-19 | non-UTF8 bytes in a result | T0 | impl: **finding** — not surfaced as an error at all |
 | ERR-20 | HTTP: connection refused, nothing listening | T0 | impl |
 | ERR-21 | HTTP: `500` on initialize | T0 | impl |
 | ERR-22 | HTTP: `401` with no `WWW-Authenticate` | T0 | impl |
@@ -435,7 +494,7 @@ path T0 — free and fully deterministic. Feasibility and risk in `DET-15`.
 | ERR-24 | HTTP: SSE stream closed mid-response | T0 | impl |
 | ERR-25 | HTTP: TLS failure / untrusted certificate | T0 | plan |
 | ERR-26 | HTTP: response stalls after headers → read timeout | T0 | plan |
-| ERR-27 | **isolation**: one broken + one healthy server → healthy tools still work | T1 | impl (T1, awaiting a live run) |
+| ERR-27 | **isolation**: one broken + one healthy server → healthy tools still work | T1 | impl (verified) |
 | ERR-28 | no orphan or zombie server processes after exit, on success and failure | T0 | impl |
 | ERR-29 | interrupt during an in-flight call terminates child servers | T0 | plan |
 | ERR-30 | error text does not leak env values or secrets | T0 | impl |
@@ -468,7 +527,7 @@ path T0 — free and fully deterministic. Feasibility and risk in `DET-15`.
 | ID | Test | Tier | Status |
 |---|---|---|---|
 | RDY-01 | conformance matrix artifact: observed behaviour vs spec MUST/SHOULD | — | impl |
-| RDY-02 | permission gate cannot be bypassed by the server | T1 | impl |
+| RDY-02 | permission gate cannot be bypassed by the server | T1 | impl (verified: by omission from the tool list, not by refusing a call) |
 | RDY-03 | injected instructions in a tool **description** are not followed | T1 | plan |
 | RDY-04 | injected instructions in a tool **result** are not followed | T1 | plan |
 | RDY-05 | shell metacharacters in a server-supplied tool name cause no injection | T0 | plan |
@@ -485,7 +544,7 @@ path T0 — free and fully deterministic. Feasibility and risk in `DET-15`.
 | RDY-16 | sampling is **not** advertised; a server requesting it gets a clean refusal | T0 | impl |
 | RDY-17 | `roots` is advertised, so `roots/list` from the server must be answered | T0 | impl |
 | RDY-18 | `elicitation` is advertised; form and url elicitation behaviour non-interactively | T0 | plan |
-| RDY-19 | progress notifications during a long call — characterize | T1 | plan |
+| RDY-19 | progress notifications during a long call — client asks for them | T1 | plan: client sends `_meta.progressToken`, so this is concretely testable |
 | RDY-20 | cancellation on interrupt — characterize | T1 | plan |
 | RDY-21 | logging notifications — characterize | T0 | plan |
 | RDY-22 | version matrix: green on the pin, diffs reported on newer versions | — | plan |

@@ -12,6 +12,7 @@
 package toolcall
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -315,9 +316,22 @@ func TestTOOL22_OversizedResult(t *testing.T) {
 	if !run.TerminatedNormally() {
 		t.Errorf("TOOL-22: client did not finish cleanly on an oversized result\nstderr: %s", truncate(r.Stderr, 500))
 	}
-	for _, res := range run.ToolResults {
-		t.Logf("TOOL-22: tool_result delivered %d bytes (fixture sent 1048576), isError=%v",
-			len(res.Text), res.IsError)
+	// The byte counts below come from this package's own flattening of the
+	// content blocks, so the raw block shapes are logged next to them: a short
+	// count may mean the client truncated, or merely that a block type is not
+	// text and this parser rendered it as nothing. Characterizing truncation
+	// off an unexplained number would be guesswork.
+	for i, res := range run.ToolResults {
+		t.Logf("TOOL-22: tool_result[%d] flattened to %d bytes (fixture sent 1048576), isError=%v",
+			i, len(res.Text), res.IsError)
+	}
+	for _, ev := range run.Events {
+		if ev["type"] != "user" {
+			continue
+		}
+		if b, err := json.Marshal(ev); err == nil {
+			t.Logf("TOOL-22: raw tool_result envelope (first 600 bytes): %s", truncate(string(b), 600))
+		}
 	}
 }
 

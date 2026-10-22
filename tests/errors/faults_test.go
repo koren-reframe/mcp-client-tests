@@ -178,6 +178,40 @@ func TestERR31_ExitCodeDoesNotReflectFailure(t *testing.T) {
 	}
 }
 
+// TestERR04_ConnectTimeoutIsConfigurable pins the connect timeout as a
+// mechanism rather than as a number.
+//
+// The default is about 28s, which is too slow and too environment-dependent to
+// assert tightly. MCP_TIMEOUT moves it, so the deterministic test is that the
+// knob works: at 5s the failure must arrive far sooner than the default would
+// allow. Verified against 5000, 60000 and unset before being written this way.
+//
+// Worth contrasting with ERR-17: the connect path bounds itself, the tool-call
+// path does not.
+func TestERR04_ConnectTimeoutIsConfigurable(t *testing.T) {
+	t.Parallel()
+	e := harness.New(t)
+	e.Extra = map[string]string{"MCP_TIMEOUT": "5000"}
+	e.AddStdio("slow", "hang_initialize")
+
+	r, st := e.Health(60 * time.Second)
+	if r.TimedOut {
+		t.Fatal("ERR-04: health check did not return at all")
+	}
+	got := e.RequireState(st, "slow", health.Failed)
+	if !strings.Contains(strings.ToLower(got.Cause), "timed out") {
+		t.Errorf("ERR-04: cause = %q, want a timeout", got.Cause)
+	}
+	// The default would take roughly 28s, so anything under 20s proves the
+	// variable was read, without asserting a precise duration (DET-14).
+	if limit := 20 * time.Second; r.Dur > limit {
+		t.Errorf("ERR-04: MCP_TIMEOUT=5000 appears to be ignored: failure took %s, "+
+			"which is within the unconfigured default. Expected well under %s.",
+			r.Dur.Round(time.Millisecond), limit)
+	}
+	t.Logf("ERR-04: MCP_TIMEOUT=5000 honoured; failed in %s (default is ~28s)", r.Dur.Round(time.Millisecond))
+}
+
 // TestERR28_NoOrphanedServerProcesses: after the client exits, the servers it
 // spawned must be gone. The per-test transcript path makes the process
 // identifiable, so this does not depend on counting all fixture processes in a
