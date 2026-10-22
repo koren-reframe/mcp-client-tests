@@ -35,25 +35,29 @@ case "$TARGET" in
     echo "== smoke: version pin and baseline handshake =="
     exec go test -count=1 -v -timeout 5m -run 'TestCONN39_VersionPin|TestCONN40_BaselineHandshake' ./tests/protocol/... "$@"
     ;;
-  t1|model)
+  t1|model|toolcall)
     # The model tier lives behind the 'model' build tag, so it is invisible to
-    # every other target and cannot be run by accident.
+    # every other target and cannot be run by accident. Only the toolcall
+    # package is named here: running ./tests/... with the tag would re-run the
+    # whole keyless tier for nothing.
     need_key
-    echo "== T1: model tier (spends tokens) =="
-    exec go test -tags=model -count=1 -timeout 30m ./tests/... "$@"
+    echo "== T1: model tier (spends tokens, model=${SUITE_MODEL:-haiku}) =="
+    exec go test -tags=model -count=1 -v -timeout 40m ./tests/toolcall/... "$@"
     ;;
   all)
     need_key
     echo "== T0 then T1 =="
-    go test -count=1 -shuffle=on -timeout 20m ./tests/protocol/...
-    exec go test -tags=model -count=1 -timeout 30m ./tests/... "$@"
+    go test -count=1 -shuffle=on -timeout 20m ./tests/...
+    exec go test -tags=model -count=1 -v -timeout 40m ./tests/toolcall/... "$@"
     ;;
   flake)
     # DET-06: report a rate over repeated runs rather than a binary pass.
     need_key
     N="${FLAKE_RUNS:-5}"
     echo "== flake: $N repeats of the model tier =="
-    exec go test -tags=model -count="$N" -timeout 60m ./tests/... "$@"
+    echo "   Go reports a subtest as failed if any repeat fails, so read the"
+    echo "   per-run lines, not just the summary: the rate is the result (DET-06)."
+    exec go test -tags=model -count="$N" -v -timeout 90m ./tests/toolcall/... "$@"
     ;;
   modes)
     exec fixture-mcp -list-modes
@@ -73,7 +77,7 @@ usage: run.sh [target]
   protocol just the Q1 connection and handshake package
   errors   just the Q3 fault catalogue package
   smoke    version pin + baseline handshake, verbose
-  t1       model tier, needs ANTHROPIC_API_KEY
+  t1       model tier (Q2 tool calls + tool-level faults), needs ANTHROPIC_API_KEY
   all      t0 then t1
   flake    repeat the model tier FLAKE_RUNS times (default 5)
   modes    list the fixture's fault injection catalogue

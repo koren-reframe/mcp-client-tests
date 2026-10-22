@@ -59,6 +59,18 @@ came out of running it: `--mcp-config` turned out to be session-only, re-tiering
 four rows, and the health check turned out to have more states than the parser
 knew.
 
+## 6 — Model tier
+
+> continue to tests/toolcall, and fix the gaps you stated like the hang_tool,
+> when done, we will make the tests and write the README
+
+Produced `internal/claudecli` (stream-json event parser), `harness.Prompt`
+(pinned model, narrowed allow-list, per-session cost logging),
+`tests/toolcall/toolcall_test.go` (the three-witness proof and argument
+fidelity) and `tests/toolcall/toolfaults_test.go` (the eight tool-level faults
+the keyless tier cannot reach, plus the isolation test). Both are behind the
+`model` build tag.
+
 ## Method notes
 
 - Recon preceded planning: `claude --help`, `claude mcp --help` and every `mcp`
