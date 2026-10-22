@@ -162,7 +162,8 @@ func TestCONN37_TwoServersBothConnect(t *testing.T) {
 	}
 }
 
-// TestCONN47_PendingApprovalIsNotConnected: a project-scoped .mcp.json server
+// TestCONN47_PendingApprovalIsNotConnected covers CONN-47 and CONN-08: a
+// project-scoped .mcp.json server
 // is gated behind approval, and the client must not connect to it before then.
 // The empty transcript is the proof, and this is also why the suite never
 // relies on .mcp.json for its own fixtures.

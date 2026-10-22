@@ -26,8 +26,11 @@ RUN_ARGS=(--rm -v "$PWD/artifacts:/artifacts")
 if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
   RUN_ARGS+=(-e "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}")
 fi
-if [ -n "${FLAKE_RUNS:-}" ]; then
-  RUN_ARGS+=(-e "FLAKE_RUNS=${FLAKE_RUNS}")
-fi
+# Forward the knobs the suite understands, only when they are set.
+for v in FLAKE_RUNS SUITE_SLOW SUITE_MODEL; do
+  if [ -n "${!v:-}" ]; then
+    RUN_ARGS+=(-e "$v=${!v}")
+  fi
+done
 
 exec docker run "${RUN_ARGS[@]}" "$IMAGE" "$TARGET" "$@"

@@ -1,0 +1,103 @@
+# NOT YET EXERCISED. This repository has no remote, so this workflow has been
+# written to be correct by inspection but has never run. See the CI roadmap in
+# README.md for what else is needed before it should gate anything.
+#
+# The split below is the important part: the keyless tier runs everywhere,
+# including on pull requests from forks, because it needs no secret. The model
+# tier runs only where the secret is actually available, so a fork PR can
+# neither exfiltrate the key nor spend money.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 3 * * *" # nightly, for the slow and repeated tiers
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  t0:
+    name: T0 (keyless)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Almost all of the build is the 256 MB Claude Code binary. Because
+      # CLAUDE_VERSION is pinned, this layer is stable until the pin moves.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: mcp-client-tests:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run keyless tier
+        run: |
+          mkdir -p artifacts
+          docker run --rm -v "$PWD/artifacts:/artifacts" mcp-client-tests:ci t0
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: t0-artifacts
+          path: artifacts/
+          if-no-files-found: ignore
+
+  t1:
+    name: T1 (model tier)
+    needs: t0
+    # Only where the secret exists: the default branch, a labelled PR, or the
+    # nightly run. Never on an unlabelled fork PR.
+    if: >
+      github.event_name == 'schedule' ||
+      github.event_name == 'push' ||
+      contains(github.event.pull_request.labels.*.name, 'run-model-tier')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # The model tier is probabilistic. Until the suite computes a pass rate
+    # (DET-06/DET-07 in PLAN.md), it reports rather than gates.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: mcp-client-tests:ci
+          cache-from: type=gha
+
+      - name: Run model tier
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # The slow characterization tests only on the nightly run.
+          SUITE_SLOW: ${{ github.event_name == 'schedule' && '1' || '' }}
+        run: |
+          mkdir -p artifacts
+          docker run --rm \
+            -v "$PWD/artifacts:/artifacts" \
+            -e ANTHROPIC_API_KEY \
+            -e SUITE_SLOW \
+            mcp-client-tests:ci t1
+
+      - name: Upload failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: t1-artifacts
+          path: artifacts/
+          if-no-files-found: ignore

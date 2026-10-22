@@ -71,6 +71,29 @@ fidelity) and `tests/toolcall/toolfaults_test.go` (the eight tool-level faults
 the keyless tier cannot reach, plus the isolation test). Both are behind the
 `model` build tag.
 
+## 7 — Reviewing the live run
+
+> I exported an api key and ran ./run.sh t1, check the result
+
+The run was still in progress, so its container logs were followed to
+completion rather than guessed at. 15 of 16 passed. The failure was diagnosed
+from the mounted failure artifact as a real client defect (no bound on a
+hanging tool), the connect-timeout contrast was then verified separately at T0
+with no key, and `ERR-17` was restructured around the finding.
+
+## 8 — Documentation and reconciliation
+
+> write the README.md covering the architecture the one command run
+> instructions the ci roadmap and how each of the five questions is answered
+> then check that PLAN.md is updated and reconcile the status so only whats
+> actually implemented is marked impl, and make sure PROMPTS.md is updated
+
+Produced `README.md`, `.github/workflows/ci.yml`, and a status reconciliation of
+`PLAN.md` driven by a script that compared every row marked `impl` against the
+plan IDs actually referenced in code. That audit demoted 18 rows that were
+aspirational, promoted 2 that had been implemented without being credited, and
+added 2 rows the implementation had invented.
+
 ## Method notes
 
 - Recon preceded planning: `claude --help`, `claude mcp --help` and every `mcp`
@@ -80,3 +103,13 @@ the keyless tier cannot reach, plus the isolation test). Both are behind the
 - The claim that `claude mcp list` health-checks servers (which the whole T0
   tier depends on) was probed with a throwaway fixture server before being
   relied upon, not assumed from the help text.
+- Two assumptions in the plan were contradicted by running it, and the plan was
+  corrected rather than the tests bent to fit: `--mcp-config` turned out to be
+  session-only (so it cannot be what makes T0 hermetic), and the health check
+  turned out to have six result states rather than two.
+- The instrument was calibrated before being trusted. Sweeping all 38 fault
+  modes once caught a bug in the fixture itself — a bare `select{}` tripped Go's
+  deadlock detector, so the "hang" modes were killing the process and the client
+  was correctly reporting a closed connection rather than a timeout.
+- The final status reconciliation was done by script, not by reading, because a
+  status column maintained by hand drifts and a drifted one is worse than none.

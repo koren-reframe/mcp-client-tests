@@ -34,9 +34,10 @@ func TestCONN39_VersionPin(t *testing.T) {
 //
 // One keyless `claude mcp list` settles a whole group of plan rows at once,
 // because they are independent assertions over a single recorded transcript:
-// CONN-01 (connects), CONN-40 (health check needs no key), CONN-48 (the
-// undocumented server/discover pre-probe and its fallback), CONN-49 (advertised
-// capabilities), CONN-50 (id discipline), CONN-51 (frame order).
+// CONN-40 (the health check needs no key), CONN-48 (the undocumented
+// server/discover pre-probe and its fallback), CONN-49 (advertised
+// capabilities), CONN-50 (id discipline), CONN-11 and CONN-51 (frame order,
+// including notifications/initialized), CONN-12 (tools/list comes after init).
 func TestCONN40_BaselineHandshake(t *testing.T) {
 	e := harness.New(t)
 

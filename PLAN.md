@@ -4,8 +4,14 @@ System under test: **the MCP client embedded in Claude Code 2.1.296**, exercised
 only through its public surfaces (CLI flags, config files, environment, and the
 wire protocol it speaks to MCP servers). No source access, no internal hooks.
 
-Status legend: `impl` implemented in this suite · `plan` specified here, not
-implemented · `blocked` cannot be reached black-box/headlessly (reason given).
+Status legend: `impl` there is code in this suite that does it · `plan`
+specified here, not implemented · `blocked` cannot be reached
+black-box/headlessly (reason given). `impl (verified)` means it has also been
+executed successfully against the real client; `impl (covered by X)` means row X
+asserts the same behaviour and a separate test would be duplication. Where a
+row is only partly implemented the qualifier says what is missing, because a
+bare `impl` on a half-done row is the one thing that would make this table
+useless.
 Tier legend: `T0` no model, no API key · `T1` one model turn (cheap, pinned
 model) · `T2` multi-turn or high-volume · `—` harness property, not a test case.
 
@@ -403,20 +409,20 @@ path T0 — free and fully deterministic. Feasibility and risk in `DET-15`.
 | CONN-22 | configured working directory is applied to the spawned server | T0 | plan |
 | CONN-23 | streamable HTTP: `Mcp-Session-Id` captured and echoed on later requests | T0 | impl |
 | CONN-24 | HTTP: `Accept` includes `application/json` and `text/event-stream` | T0 | impl |
-| CONN-25 | legacy SSE transport connects and completes a tool call | T1 | plan |
+| CONN-25 | legacy SSE transport connects and completes a tool call | T1 | impl (verified) |
 | CONN-26 | static auth header is sent on `initialize` **and** every later request | T0 | impl |
 | CONN-27 | multiple header flags all applied | T0 | plan |
 | CONN-28 | `${VAR}` expansion inside a header value | T0 | plan |
-| CONN-29 | bearer token is **not** replayed across a cross-origin redirect | T0 | impl |
+| CONN-29 | bearer token is **not** replayed across a cross-origin redirect | T0 | plan: needs a redirecting fixture endpoint |
 | CONN-30 | `401` + `WWW-Authenticate` triggers protected-resource metadata discovery, path-inserted form first | T0 | impl |
 | CONN-31 | discovery continues to authorization-server metadata, and only after the resource metadata | T0 | impl |
 | CONN-32 | dynamic client registration request shape (RFC 7591) | T0 | plan |
 | CONN-33 | authorization URL carries PKCE `code_challenge`, `S256`, and `state` | T0 | plan |
 | CONN-34 | full OAuth code exchange end to end against a fixture authorization server | T0 | plan: looked blocked until recon found `--callback-port` + `claude mcp login`; the consent redirect can be driven directly at a pinned port. Attempt after the depth areas; README states the outcome either way |
-| CONN-35 | header/token values absent from stdout, stderr and artifacts | T0 | impl |
+| CONN-35 | header/token values absent from stdout, stderr and artifacts | T0 | plan: the fixture redacts credentials by construction, but no test asserts absence |
 | CONN-36 | server process is spawned exactly once per session | T0 | impl |
 | CONN-37 | two servers both connect; both tool sets are exposed | T0 | impl |
-| CONN-38 | connect timeout fires within bound when server never answers initialize | T0 | impl |
+| CONN-38 | connect timeout fires within bound when server never answers initialize | T0 | impl (covered by ERR-04) |
 | CONN-39 | version guard: `claude --version` == 2.1.296 (pin did not drift) | T0 | impl |
 | CONN-40 | `claude mcp list` health check connects and reports status with no API key | T0 | impl |
 | CONN-41 | `claude mcp login <name>` emits the discovery sequence for an HTTP server | T0 | plan |
@@ -485,19 +491,21 @@ path T0 — free and fully deterministic. Feasibility and risk in `DET-15`.
 | ERR-15 | `tools/call` answered with `-32601` method not found | T0 | impl (verified) |
 | ERR-16 | `tools/call` answered with `-32603` internal error | T1 | impl (verified) |
 | ERR-17 | tool hangs → session must be bounded, not hang indefinitely | T1 | impl: **finding** — no default bound; now tested via MCP_TOOL_TIMEOUT, see §0.5 |
+| ERR-17b | no *default* tool timeout: the unbounded case, asserted as still-present | T1 | impl: opt-in via `SUITE_SLOW=1`, characterization of a defect |
 | ERR-18 | result missing `content` / wrong shape → handled cleanly | T1 | impl: **finding** — not surfaced as an error at all |
 | ERR-19 | non-UTF8 bytes in a result | T0 | impl: **finding** — not surfaced as an error at all |
 | ERR-20 | HTTP: connection refused, nothing listening | T0 | impl |
 | ERR-21 | HTTP: `500` on initialize | T0 | impl |
 | ERR-22 | HTTP: `401` with no `WWW-Authenticate` | T0 | impl |
-| ERR-23 | HTTP: `404` on an expired session id → client re-initializes | T0 | impl |
-| ERR-24 | HTTP: SSE stream closed mid-response | T0 | impl |
+| ERR-23 | HTTP: `404` on an expired session id → client re-initializes | T0 | plan: `http_session_gone` mode exists, no test drives it |
+| ERR-24 | HTTP: SSE stream closed mid-response | T0 | plan: `sse_close_mid` mode exists, no test drives it |
+| ERR-22b | `401` *with* a Bearer challenge gives the same verdict as a bare `401` | T0 | impl (verified) |
 | ERR-25 | HTTP: TLS failure / untrusted certificate | T0 | plan |
 | ERR-26 | HTTP: response stalls after headers → read timeout | T0 | plan |
 | ERR-27 | **isolation**: one broken + one healthy server → healthy tools still work | T1 | impl (verified) |
 | ERR-28 | no orphan or zombie server processes after exit, on success and failure | T0 | impl |
 | ERR-29 | interrupt during an in-flight call terminates child servers | T0 | plan |
-| ERR-30 | error text does not leak env values or secrets | T0 | impl |
+| ERR-30 | error text does not leak env values or secrets | T0 | plan |
 | ERR-31 | `mcp list` exits 0 despite a failed server — pinned as observed, flagged in README | T0 | impl |
 | ERR-32 | malformed `.mcp.json` → actionable parse error, no crash | T0 | impl |
 
@@ -505,51 +513,51 @@ path T0 — free and fully deterministic. Feasibility and risk in `DET-15`.
 
 | ID | Test | Tier | Status |
 |---|---|---|---|
-| DET-01 | the whole T0 tier passes with no API key present | — | impl |
-| DET-02 | protocol assertions stable across `-count=10` | T0 | impl |
-| DET-03 | `clientInfo` fields identical across runs | T0 | impl |
-| DET-04 | tool-name mangling identical across runs | T0 | impl |
-| DET-05 | error classification identical across runs per injected fault | T0 | impl |
-| DET-06 | model-tier results reported as pass-rate over N, not binary | — | impl |
-| DET-07 | flake budget: a model-tier test under threshold is reported flaky, not green | — | impl |
-| DET-08 | model pinned by flag and recorded in the run report | — | impl |
-| DET-09 | model-tier argument checks are invariant-based, not exact-equality | — | impl |
-| DET-10 | no assertion depends on assistant prose (nonce is the only matched text) | — | impl |
-| DET-11 | run report records token spend and cost from the `result` event | — | impl |
-| DET-12 | hermeticity proven by running the suite twice in one container | — | impl |
-| DET-13 | order independence under `-shuffle=on` | — | impl |
-| DET-14 | timeout assertions are bounds, never exact durations | — | impl |
+| DET-01 | the whole T0 tier passes with no API key present | — | impl (verified: the default target runs green with no key) |
+| DET-02 | protocol assertions stable across `-count=10` | T0 | plan: `-count` is available; no test asserts stability across repeats |
+| DET-03 | `clientInfo` fields identical across runs | T0 | plan |
+| DET-04 | tool-name mangling identical across runs | T0 | plan |
+| DET-05 | error classification identical across runs per injected fault | T0 | plan |
+| DET-06 | model-tier results reported as pass-rate over N, not binary | — | plan: the `flake` target repeats runs; it does not yet compute a rate |
+| DET-07 | flake budget: a model-tier test under threshold is reported flaky, not green | — | plan |
+| DET-08 | model pinned by flag and recorded in the run report | — | impl (pinned via `harness.Model`, logged per session) |
+| DET-09 | model-tier argument checks are invariant-based, not exact-equality | — | impl (TOOL-11 asserts types, and only unambiguous values) |
+| DET-10 | no assertion depends on assistant prose (nonce is the only matched text) | — | impl, with one documented exception: `errorSurfaced` falls back to scanning result text for failure keywords, and reports which route it used |
+| DET-11 | run report records token spend and cost from the `result` event | — | impl (logged per session; no aggregate report file yet) |
+| DET-12 | hermeticity proven by running the suite twice in one container | — | plan |
+| DET-13 | order independence under `-shuffle=on` | — | impl (`-shuffle=on` on every keyless run) |
+| DET-14 | timeout assertions are bounds, never exact durations | — | impl (bounds throughout; ERR-04 and ERR-17 are the clearest cases) |
 | DET-15 | stub-model driver via `ANTHROPIC_BASE_URL` to make Q2 fully T0 | — | plan: highest-value next step; needs a faithful streaming Messages API stub |
-| DET-16 | `--restricted` + single allowed tool as a non-determinism reducer for T1 | — | impl |
+| DET-16 | `--restricted` + single allowed tool as a non-determinism reducer for T1 | — | plan: `PromptOpts.Restricted` exists in the harness; no test uses it yet |
 
 ### Q5 — What else must be true before calling the client working
 
 | ID | Test | Tier | Status |
 |---|---|---|---|
-| RDY-01 | conformance matrix artifact: observed behaviour vs spec MUST/SHOULD | — | impl |
+| RDY-01 | conformance matrix artifact: observed behaviour vs spec MUST/SHOULD | — | impl (the observed-behaviour table in README; hand-maintained, not generated) |
 | RDY-02 | permission gate cannot be bypassed by the server | T1 | impl (verified: by omission from the tool list, not by refusing a call) |
 | RDY-03 | injected instructions in a tool **description** are not followed | T1 | plan |
 | RDY-04 | injected instructions in a tool **result** are not followed | T1 | plan |
 | RDY-05 | shell metacharacters in a server-supplied tool name cause no injection | T0 | plan |
 | RDY-06 | client still mediates/approves when a tool arg contains a traversal path | T1 | plan |
-| RDY-07 | secrets never land in session transcripts or debug logs | T0 | impl |
-| RDY-08 | fd and process counts stable over 50 sequential connect/teardown cycles | T0 | impl |
+| RDY-07 | secrets never land in session transcripts or debug logs | T0 | plan: fixture redacts by construction; no test asserts it |
+| RDY-08 | fd and process counts stable over 50 sequential connect/teardown cycles | T0 | plan: ERR-28 covers one cycle, not fifty |
 | RDY-09 | 100 rapid calls complete without degradation | T2 | plan |
 | RDY-10 | servers are restarted per session, not leaked across sessions | T0 | plan |
-| RDY-11 | status surface reports connected vs failed accurately | T0 | impl |
+| RDY-11 | status surface reports connected vs failed accurately | T0 | impl (covered by the fault catalogue: every row asserts the reported state) |
 | RDY-12 | failure is discoverable at all from `mcp list` (output, since not the exit code) | T0 | impl |
-| RDY-13 | `--debug-file` output is sufficient to diagnose a failed handshake | T0 | impl |
-| RDY-14 | backwards compatibility: older-protocol server remains usable | T0 | impl |
-| RDY-15 | forwards compatibility: unknown capability keys ignored | T0 | impl |
-| RDY-16 | sampling is **not** advertised; a server requesting it gets a clean refusal | T0 | impl |
-| RDY-17 | `roots` is advertised, so `roots/list` from the server must be answered | T0 | impl |
+| RDY-13 | `--debug-file` output is sufficient to diagnose a failed handshake | T0 | plan: `--debug-file` confirmed to exist, not yet exercised |
+| RDY-14 | backwards compatibility: older-protocol server remains usable | T0 | impl (covered by CONN-13 `old_protocol`) |
+| RDY-15 | forwards compatibility: unknown capability keys ignored | T0 | impl (covered by ERR-10 `extra_init_fields`) |
+| RDY-16 | sampling is **not** advertised; a server requesting it gets a clean refusal | T0 | impl (absence asserted in CONN-49; the refusal path has a `probe_sampling` mode but no test) |
+| RDY-17 | `roots` is advertised, so `roots/list` from the server must be answered | T0 | plan: advertisement asserted in CONN-49; `probe_roots` mode exists but no test drives the round trip |
 | RDY-18 | `elicitation` is advertised; form and url elicitation behaviour non-interactively | T0 | plan |
 | RDY-19 | progress notifications during a long call — client asks for them | T1 | plan: client sends `_meta.progressToken`, so this is concretely testable |
 | RDY-20 | cancellation on interrupt — characterize | T1 | plan |
 | RDY-21 | logging notifications — characterize | T0 | plan |
 | RDY-22 | version matrix: green on the pin, diffs reported on newer versions | — | plan |
 | RDY-23 | image builds and suite passes on arm64 and amd64 | — | plan |
-| RDY-24 | one command from a clean clone with only Docker, git and the key | — | impl |
+| RDY-24 | one command from a clean clone with only Docker, git and the key | — | impl (verified by running it; no self-test) |
 
 ---
 
@@ -569,7 +577,7 @@ properties of the harness rather than as test cases. Q5 ships the conformance
 matrix plus spot tests for the claims that would most embarrass a release —
 isolation, process leaks, permission gating, secret hygiene.
 
-**Row counts.** 151 items specified, 105 implemented. That ratio is only
+**Row counts.** 153 items specified, 88 implemented (27 of those also executed against the real client and marked `impl (verified)`), 65 still `plan`. That ratio is only
 achievable because of two architectural choices, and it is worth being explicit
 about why it is not over-promising:
 
