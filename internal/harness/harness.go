@@ -15,6 +15,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -42,6 +43,11 @@ type Env struct {
 	ProbeDir   string // where write_probe writes
 	Nonce      string // unique per test run; witness C
 	FixtureBin string
+
+	// Extra adds environment variables for the CLI process, used to prove that
+	// ${VAR} references in server config are expanded from the client's own
+	// environment at spawn time.
+	Extra map[string]string
 
 	// WithAPIKey opts a test into the model tier. It is false by default, so a
 	// test that forgets to ask for a key simply cannot reach the model: that is
@@ -191,6 +197,9 @@ func (e *Env) env() []string {
 		"TERM=dumb",
 		"NO_COLOR=1",
 	}
+	for k, v := range e.Extra {
+		env = append(env, k+"="+v)
+	}
 	if e.WithAPIKey {
 		key := os.Getenv("ANTHROPIC_API_KEY")
 		if key == "" {
@@ -199,6 +208,61 @@ func (e *Env) env() []string {
 		env = append(env, "ANTHROPIC_API_KEY="+key)
 	}
 	return env
+}
+
+// TranscriptFor gives a second, independent transcript path, for tests that
+// configure more than one server and must keep their recordings apart.
+func (e *Env) TranscriptFor(name string) string {
+	return filepath.Join(filepath.Dir(e.Transcript), "frames-"+name+".ndjson")
+}
+
+// FramesFor reads a named transcript.
+func (e *Env) FramesFor(name string) transcript.Frames {
+	e.T.Helper()
+	fs, err := transcript.Read(e.TranscriptFor(name))
+	if err != nil {
+		e.T.Fatalf("harness: read transcript %s: %v", name, err)
+	}
+	return fs
+}
+
+// FixtureArgsT is FixtureArgs with an explicit transcript path.
+func (e *Env) FixtureArgsT(transcriptPath, mode string, extra ...string) []string {
+	args := []string{e.FixtureBin,
+		"-transport", "stdio",
+		"-mode", mode,
+		"-transcript", transcriptPath,
+		"-nonce", e.Nonce,
+		"-probe-dir", e.ProbeDir,
+	}
+	return append(args, extra...)
+}
+
+// WriteWorkFile writes a file into the isolated project directory, for things
+// like a project-scoped .mcp.json.
+func (e *Env) WriteWorkFile(rel, content string) string {
+	e.T.Helper()
+	path := filepath.Join(e.Work, rel)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		e.T.Fatalf("harness: mkdir for %s: %v", rel, err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		e.T.Fatalf("harness: write %s: %v", rel, err)
+	}
+	return path
+}
+
+// ClosedPort returns a port that was bound and released, so a connection to it
+// is refused rather than merely slow.
+func ClosedPort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("harness: reserve port: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+	return port
 }
 
 // Frames reads the fixture transcript.

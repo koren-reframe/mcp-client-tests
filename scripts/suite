@@ -19,15 +19,25 @@ need_key() {
 # separate test. -count=1 defeats Go's result caching, which would otherwise
 # hide a flaky client behind a cached pass.
 case "$TARGET" in
-  t0|protocol)
-    echo "== T0: protocol tier (no model, no API key) =="
+  t0)
+    # Every package that is not behind the 'model' build tag is keyless, so
+    # ./tests/... is exactly the T0 tier and stays correct as packages are added.
+    echo "== T0: keyless tier (no model, no API key) =="
+    exec go test -count=1 -shuffle=on -timeout 20m ./tests/... "$@"
+    ;;
+  protocol)
     exec go test -count=1 -shuffle=on -timeout 20m ./tests/protocol/... "$@"
+    ;;
+  errors)
+    exec go test -count=1 -shuffle=on -timeout 20m ./tests/errors/... "$@"
     ;;
   smoke)
     echo "== smoke: version pin and baseline handshake =="
     exec go test -count=1 -v -timeout 5m -run 'TestCONN39_VersionPin|TestCONN40_BaselineHandshake' ./tests/protocol/... "$@"
     ;;
   t1|model)
+    # The model tier lives behind the 'model' build tag, so it is invisible to
+    # every other target and cannot be run by accident.
     need_key
     echo "== T1: model tier (spends tokens) =="
     exec go test -tags=model -count=1 -timeout 30m ./tests/... "$@"
@@ -59,7 +69,9 @@ case "$TARGET" in
     cat >&2 <<USAGE
 usage: run.sh [target]
 
-  t0       protocol tier, no model, no API key required   (default)
+  t0       keyless tier: protocol + errors, no API key     (default)
+  protocol just the Q1 connection and handshake package
+  errors   just the Q3 fault catalogue package
   smoke    version pin + baseline handshake, verbose
   t1       model tier, needs ANTHROPIC_API_KEY
   all      t0 then t1

@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -41,6 +42,7 @@ func main() {
 		nonce      = flag.String("nonce", env("FIXTURE_NONCE", ""), "value echo_nonce returns")
 		probeDir   = flag.String("probe-dir", env("FIXTURE_PROBE_DIR", os.TempDir()), "directory write_probe writes into")
 		portFile   = flag.String("port-file", env("FIXTURE_PORT_FILE", ""), "write the chosen http/sse port here")
+		recordEnv  = flag.String("record-env", "", "comma separated env var names to record at startup")
 		listModes  = flag.Bool("list-modes", false, "print the fault catalogue and exit")
 	)
 	flag.Parse()
@@ -71,6 +73,21 @@ func main() {
 	defer rec.Close()
 
 	s := &Session{mode: mode, name: *name, nonce: *nonce, probeDir: *probeDir, rec: rec}
+
+	// Proof of what the client actually put in the child's environment, which
+	// is how config-level ${VAR} expansion is verified.
+	if *recordEnv != "" {
+		got := map[string]any{}
+		for _, k := range strings.Split(*recordEnv, ",") {
+			k = strings.TrimSpace(k)
+			if k == "" {
+				continue
+			}
+			v, present := os.LookupEnv(k)
+			got[k] = map[string]any{"present": present, "value": v}
+		}
+		rec.Note("spawn_env", got)
+	}
 
 	// Faults that happen before a single byte is read.
 	if mode.ExitBeforeInit != nil {

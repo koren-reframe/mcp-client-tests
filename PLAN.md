@@ -128,14 +128,26 @@ numbers and vocabulary the error assertions are written against:
   never answers is reported as `Failed to connect — Request timed out`. Tests
   therefore assert "fails with a timeout classification inside 40 s", never an
   exact duration (`DET-14`).
-- **The health check has three outcomes, not two.** Besides `✔ Connected` and
-  `✘ Failed to connect — <cause>` there is a partial state,
-  `! Connected · tools fetch failed — <cause>`, produced when the handshake
-  succeeds but `tools/list` does not. Any assertion that only looks for a tick
-  or a cross silently mis-reads that case, which is precisely what happened in
-  the first sweep before the vocabulary was known.
+- **The health check has at least six outcomes, not two.** `✔ Connected`,
+  `✘ Failed to connect — <cause>`, `! Connected · tools fetch failed — <cause>`
+  (handshake fine, tool discovery not), `! Needs authentication` (a 401, with no
+  cause text and the same verdict whether or not a `WWW-Authenticate` challenge
+  came with it), `⏸ Pending approval` (unapproved `.mcp.json`, never connected
+  to) and a disabled state. Two of those contain the word "Connected", so a
+  tick-or-cross match mis-reads them. This was learned twice the hard way: once
+  when the first mode sweep mis-read the partial state, and again when the
+  implemented HTTP test met `Needs authentication`, which the parser did not
+  know. The parser therefore maps unknown states to nothing at all, so the
+  server goes missing and the test fails loudly rather than being silently
+  recorded as a failure.
 - **`claude mcp list` exits 0 in every one of the 19 modes exercised so far**,
   including total connection failure. `ERR-31` is confirmed, not suspected.
+- **OAuth discovery happens during an ordinary health check**, not only under
+  an explicit login. A 401 carrying a Bearer challenge produces the chain
+  `/.well-known/oauth-protected-resource/mcp` (the RFC 9728 path-inserted form)
+  → `/.well-known/oauth-protected-resource` → `/.well-known/oauth-authorization-server`.
+  `CONN-30` and `CONN-31` are therefore T0 and implemented, which is better than
+  the plan assumed.
 - **The client is robust to the stream faults tried so far**: plain log lines on
   stdout, valid-but-not-JSON-RPC lines, a truncated frame, an unknown
   notification, unknown fields in the initialize result and a 64-tool catalogue
@@ -158,6 +170,27 @@ variable, measure the bound. The shipped `sdk-tools.d.ts` does name the
 client-side MCP tool surfaces (`ListMcpResources`, `ReadMcpResource`,
 `ReadMcpResourceDir`, `RefreshMcpTools`), which gives `CONN-17` and `TOOL-26`
 concrete targets instead of guesses.
+
+### 0.4 Correction found during implementation: the config flags are session-only
+
+`--mcp-config` and `--strict-mcp-config` are rejected outright by the `mcp`
+subcommands — `claude mcp list --mcp-config '<json>'` answers
+`error: unknown option '--mcp-config'`. They are flags of a *session*, not of
+the management commands. Four rows planned as T0 on the assumption they could
+be driven through the health check (`CONN-01`, `CONN-02`, `CONN-09`,
+`CONN-46`) are therefore re-tiered to T1 and left unimplemented for now.
+
+This matters more than a tier label, because §1.3 claimed `--strict-mcp-config`
+as part of what keeps tests hermetic. It cannot be, for T0. What actually
+provides isolation there is the per-test `HOME` plus the per-test working
+directory: `claude mcp add` writes to `~/.claude.json` keyed by project path, so
+a fresh pair of those is sufficient and is what the harness does. The strict
+flag returns as a requirement only for the model tier, where a real session
+reads ambient configuration.
+
+The T0 configuration path is therefore `claude mcp add` followed by
+`claude mcp list`, which is a fair surface to test: it is how a user configures
+a server, and it exercises persistence, scope and the health check together.
 
 ---
 
@@ -232,9 +265,11 @@ Claude Code persists MCP configuration in the user's home directory keyed by
 project path, and project-scoped `.mcp.json` servers are gated behind a trust
 prompt. Without isolation, tests pass or fail by ordering and hang waiting for
 approval in a non-interactive run. Therefore every test gets a fresh `HOME` and
-cwd via `t.TempDir()`, passes its server with `--mcp-config`, and adds
-`--strict-mcp-config` so ambient config cannot bleed in. `DET-12` proves this
-by running the suite twice inside one container.
+cwd via `t.TempDir()`, and configures its server with `claude mcp add` into that private home.
+`--strict-mcp-config` is not available to the management commands (§0.4), so for
+T0 the fresh `HOME` and cwd *are* the isolation; the strict flag becomes
+necessary only in the model tier. `DET-12` proves isolation by running the suite
+twice inside one container.
 
 ### 1.4 One command
 
@@ -285,15 +320,15 @@ path T0 — free and fully deterministic. Feasibility and risk in `DET-15`.
 
 | ID | Test | Tier | Status |
 |---|---|---|---|
-| CONN-01 | stdio server from inline `--mcp-config` JSON reaches `initialized` | T0 | impl |
-| CONN-02 | stdio server from `--mcp-config` file path connects | T0 | impl |
+| CONN-01 | stdio server from inline `--mcp-config` JSON reaches `initialized` | T1 | plan: `--mcp-config` is session-only, see §0.4 |
+| CONN-02 | stdio server from `--mcp-config` file path connects | T1 | plan: session-only flag |
 | CONN-03 | `claude mcp add --transport stdio` persists config; `mcp list` shows it | T0 | impl |
 | CONN-04 | `claude mcp get <name>` reports command, args, env, transport | T0 | impl |
 | CONN-05 | `claude mcp remove` deletes it; `mcp list` no longer shows it | T0 | impl |
 | CONN-06 | scope precedence: same server name in local vs project vs user | T0 | plan |
 | CONN-07 | project-scoped `.mcp.json` is discovered from cwd | T0 | plan |
-| CONN-08 | `.mcp.json` trust gate blocks first use non-interactively (characterize) | T0 | impl |
-| CONN-09 | `--strict-mcp-config` ignores ambient user/project config | T0 | impl |
+| CONN-08 | `.mcp.json` trust gate blocks first use: reported pending, zero frames sent | T0 | impl |
+| CONN-09 | `--strict-mcp-config` ignores ambient user/project config | T1 | plan: session-only flag |
 | CONN-10 | `initialize` carries protocolVersion, clientInfo.name/version, capabilities | T0 | impl |
 | CONN-11 | client sends `notifications/initialized` after the initialize result | T0 | impl |
 | CONN-12 | client calls `tools/list` after init and before any `tools/call` | T0 | impl |
@@ -314,8 +349,8 @@ path T0 — free and fully deterministic. Feasibility and risk in `DET-15`.
 | CONN-27 | multiple header flags all applied | T0 | plan |
 | CONN-28 | `${VAR}` expansion inside a header value | T0 | plan |
 | CONN-29 | bearer token is **not** replayed across a cross-origin redirect | T0 | impl |
-| CONN-30 | `401` + `WWW-Authenticate` triggers protected-resource metadata discovery | T0 | impl |
-| CONN-31 | discovery continues to the authorization-server metadata document | T0 | impl |
+| CONN-30 | `401` + `WWW-Authenticate` triggers protected-resource metadata discovery, path-inserted form first | T0 | impl |
+| CONN-31 | discovery continues to authorization-server metadata, and only after the resource metadata | T0 | impl |
 | CONN-32 | dynamic client registration request shape (RFC 7591) | T0 | plan |
 | CONN-33 | authorization URL carries PKCE `code_challenge`, `S256`, and `state` | T0 | plan |
 | CONN-34 | full OAuth code exchange end to end against a fixture authorization server | T0 | plan: looked blocked until recon found `--callback-port` + `claude mcp login`; the consent redirect can be driven directly at a pinned port. Attempt after the depth areas; README states the outcome either way |
@@ -330,7 +365,7 @@ path T0 — free and fully deterministic. Feasibility and risk in `DET-15`.
 | CONN-43 | WebSocket transport via `add-json` (offered there, absent from `--transport`) | T0 | plan |
 | CONN-44 | `reset-project-choices` clears `.mcp.json` approval state | T0 | plan |
 | CONN-45 | `--client-id` / `MCP_CLIENT_SECRET` are applied to the OAuth client | T0 | plan |
-| CONN-46 | `--mcp-config` is variadic: several config sources merge, later wins on conflict | T0 | impl |
+| CONN-46 | `--mcp-config` is variadic: several config sources merge, later wins on conflict | T1 | plan: session-only flag |
 | CONN-47 | `mcp get` on an unapproved `.mcp.json` server reports pending, does not connect | T0 | impl |
 | CONN-48 | undocumented `server/discover` pre-probe is sent, and `-32601` is tolerated | T0 | impl |
 | CONN-49 | advertised capabilities are exactly `roots.listChanged` + `elicitation.{form,url}` | T0 | impl |

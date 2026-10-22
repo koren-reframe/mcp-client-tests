@@ -45,6 +45,20 @@ Produced `cmd/fixture-mcp` (stdio, streamable HTTP and legacy SSE transports,
 `internal/transcript`, `internal/harness`, `tests/protocol/baseline_test.go`,
 the `Dockerfile`, `scripts/suite` and `run.sh`.
 
+## 5 — T0 suite and the Q3 table
+
+> ok start writing the go tests, implement the T0 suite and table-driven tests
+> for Q3 and Q1 baseline handshake and make sure go test ./... runs cleanly
+> inside the container without a key using the fixture's recorded frames for
+> assertions lets see the test output when done
+
+Produced `internal/health` (health-check output parser), harness additions for
+HTTP/SSE fixtures and multi-server tests, `tests/protocol/connection_test.go`,
+`tests/protocol/http_test.go` and `tests/errors/faults_test.go`. Two corrections
+came out of running it: `--mcp-config` turned out to be session-only, re-tiering
+four rows, and the health check turned out to have more states than the parser
+knew.
+
 ## Method notes
 
 - Recon preceded planning: `claude --help`, `claude mcp --help` and every `mcp`
