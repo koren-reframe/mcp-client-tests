@@ -128,7 +128,11 @@ func runStdio(s *Session) {
 		}
 		if act.Hang {
 			s.rec.Note("hang", map[string]any{"after": "request"})
-			select {} // never respond; the client's timeout is the thing under test
+			// Block in a way the runtime will not interfere with. A bare
+			// select{} looks like a deadlock to Go, which panics and exits,
+			// and the client then sees a closed connection instead of a hang.
+			// Those are different faults, so the distinction matters.
+			time.Sleep(365 * 24 * time.Hour)
 		}
 		if act.Exit != nil {
 			s.rec.Note("exit", map[string]any{"code": *act.Exit})

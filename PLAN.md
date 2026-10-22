@@ -119,6 +119,37 @@ Five things this settles that the documentation did not:
    silently blind. Pinned as a finding in `ERR-31`/`RDY-12`, and called out in
    the README as the one behaviour I would push back on as a product question.
 
+### 0.3 Measured baselines (from the implemented fault sweep)
+
+Running the fault catalogue through the keyless health check produced the
+numbers and vocabulary the error assertions are written against:
+
+- **Connect timeout is roughly 27 s.** A server that reads `initialize` and
+  never answers is reported as `Failed to connect — Request timed out`. Tests
+  therefore assert "fails with a timeout classification inside 40 s", never an
+  exact duration (`DET-14`).
+- **The health check has three outcomes, not two.** Besides `✔ Connected` and
+  `✘ Failed to connect — <cause>` there is a partial state,
+  `! Connected · tools fetch failed — <cause>`, produced when the handshake
+  succeeds but `tools/list` does not. Any assertion that only looks for a tick
+  or a cross silently mis-reads that case, which is precisely what happened in
+  the first sweep before the vocabulary was known.
+- **`claude mcp list` exits 0 in every one of the 19 modes exercised so far**,
+  including total connection failure. `ERR-31` is confirmed, not suspected.
+- **The client is robust to the stream faults tried so far**: plain log lines on
+  stdout, valid-but-not-JSON-RPC lines, a truncated frame, an unknown
+  notification, unknown fields in the initialize result and a 64-tool catalogue
+  all still reach `✔ Connected`. Those rows assert continued success, which is
+  the right expectation, rather than asserting a failure that does not happen.
+
+One methodological note worth keeping: the first sweep reported
+`hang_initialize` as a closed connection in 0 s. That was a defect in the
+instrument, not a client finding — a bare `select{}` in Go trips the deadlock
+detector, which panics and exits the process, so the fixture was testing process
+death rather than a hang. A measuring instrument needs calibrating before its
+readings mean anything, and the cheapest calibration is to sweep every mode once
+and check each fault produces the symptom it claims to.
+
 Two consequences for the instrument: it must answer or explicitly reject
 `server/discover`, and because `claude` ships as a single ~256 MB native binary
 (no JavaScript bundle to read), **timeout and limit env vars cannot be
