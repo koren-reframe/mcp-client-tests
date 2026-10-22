@@ -22,6 +22,8 @@ prose.
 Requires only Docker and git. An API key is optional.
 
 ```bash
+git clone https://github.com/koren-reframe/mcp-client-tests.git
+cd mcp-client-tests
 ./run.sh              # T0: 37 cases, no API key, ~31s
 ```
 
@@ -291,42 +293,56 @@ direction.
 ## CI roadmap
 
 The T0 tier is already CI-shaped: no key, no secrets, no network beyond the
-image build, 31s, order-shuffled, and a meaningful exit code. `.github/workflows/
-ci.yml` is included and reads as intended, but has **not been exercised** — this
-repo has no remote.
+image build, 31s, order-shuffled, and a meaningful exit code.
+`.github/workflows/ci.yml` **has now run.** The first push to this repository
+took the T0 job green in **3m14s on `ubuntu-latest`**, cold cache, image build
+included.
 
-What running it properly would take, in order of value:
+That first run also found a flaw in the workflow, which is worth keeping in the
+write-up because it is the kind that only appears when you actually run the
+thing. The T1 job was gated on the *event* — push, schedule, or a labelled PR —
+on the reasoning that those are the places the secret exists. No key is
+configured on this repository, so T1 started anyway, the suite's own `need_key`
+guard refused with exit 2, and the job went red on every push while the run as a
+whole still reported success because of `continue-on-error`. The guard was right;
+the workflow's premise was wrong. An event name is a proxy for a secret, not the
+secret. T1 now reads the secret in its first step and skips with a notice when it
+is absent, because a tier with nothing to run should skip rather than fail —
+otherwise people learn to ignore a red mark, which costs more than the tier is
+worth.
 
-1. **Two jobs, split on the secret.** T0 runs on every push and pull request,
-   including from forks, because it needs no key. T1 runs only where the secret
-   is available — on push to the default branch, or on a PR carrying a label —
-   so a fork PR cannot exfiltrate the key and cannot spend money.
-2. **Machine-readable results.** Add `gotestsum` to the image and wrap the
+**In place and exercised:**
+
+1. **Two jobs, split on the key.** T0 runs on every push and pull request,
+   including from forks, because it needs no secret. T1 starts only on a push,
+   the nightly schedule, or a PR carrying `run-model-tier` — that condition is a
+   cost gate — and then does work only if the secret is actually there. A fork PR
+   can neither exfiltrate the key nor spend money.
+2. **Artifact upload on failure.** `./artifacts/` already holds the frame
+   transcript, every CLI invocation and the test environment; the step is wired
+   with `if: failure()` and correctly skipped on the green run.
+3. **Layer caching.** `docker/build-push-action` with `cache-from`/`cache-to:
+   type=gha`. The first run paid the cold build and populated the cache; because
+   `CLAUDE_VERSION` is pinned, that layer — almost all of the image — is stable
+   until the pin moves.
+4. **Architecture.** `RDY-23` existed because the image is developed on `arm64`
+   while runners are `amd64`, and "the base images are multi-arch so it should
+   work" is not evidence. It built and passed on `amd64` on the first try.
+
+**Still needed before it should gate anything:**
+
+1. **Machine-readable results.** Add `gotestsum` to the image and wrap the
    `go test` call to emit `--junitfile`, so failures surface per-test in the PR
-   rather than in a log. About five lines in the `Dockerfile` and `scripts/suite`.
-3. **Artifact upload on failure.** `./artifacts/` already contains exactly what
-   is needed; it just needs an `actions/upload-artifact` step with `if:
-   failure()`.
-4. **Layer caching.** The image takes a few minutes to build cold, almost all of
-   it the 256 MB Claude Code binary. `docker/build-push-action` with
-   `cache-from: type=gha` keeps that off the critical path; pinning
-   `CLAUDE_VERSION` means the layer is stable until the pin moves.
-5. **Flake policy before the model tier gates anything.** T1 is probabilistic by
-   nature. Until `DET-06`/`DET-07` compute a pass rate, T1 should be
-   non-blocking: report it, do not fail the build on it. The honest version is a
-   nightly `FLAKE_RUNS=10 ./run.sh flake` whose rate is tracked over time, with a
-   threshold agreed before it becomes a gate.
-6. **Architecture.** The image is built and verified on `arm64` locally; CI
-   runners are usually `amd64`. The base images are multi-arch, so this should
-   just work, but `RDY-23` exists because "should" is not "does".
-7. **Version matrix.** `CLAUDE_VERSION` is already a build arg, so a matrix over
-   several releases comes nearly free and turns the characterization rows into a
-   diff of client behaviour across versions — which is where this suite becomes
-   most useful (`RDY-22`).
-8. **Cost control.** T1 is about $0.02 per run at current size. Worth a budget
-   assertion in the run report before anyone wires it to every commit.
-
----
+   rather than in a log. About five lines in the `Dockerfile` and
+   `scripts/suite`.
+2. **A flake policy for the model tier.** T1 is probabilistic by nature. Until
+   `DET-06`/`DET-07` compute a pass rate, T1 reports rather than gates. The
+   honest version is a nightly `FLAKE_RUNS=10 ./run.sh flake` whose rate is
+   tracked over time, with a threshold agreed before it becomes a gate.
+3. **One run of T1 in CI.** It has run locally but never on a runner, since this
+   repository has no key configured. Until it does, the CI half of the model tier
+   is unproven — which is exactly the claim this section got wrong the first
+   time, so it is stated rather than assumed.
 
 ## Repo layout
 

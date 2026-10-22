@@ -1,11 +1,21 @@
-# NOT YET EXERCISED. This repository has no remote, so this workflow has been
-# written to be correct by inspection but has never run. See the CI roadmap in
-# README.md for what else is needed before it should gate anything.
+# First exercised 2026-10-22 on ubuntu-latest: the T0 job went green in 3m14s
+# with a cold image build, which also settles RDY-23 (the image was developed on
+# arm64 and CI runners are amd64). It is still not a gate; see the CI roadmap in
+# README.md.
 #
-# The split below is the important part: the keyless tier runs everywhere,
-# including on pull requests from forks, because it needs no secret. The model
-# tier runs only where the secret is actually available, so a fork PR can
-# neither exfiltrate the key nor spend money.
+# That first run found a real flaw in this file, which is why the key gate below
+# looks the way it does. The job condition tests the *event*, which is only a
+# proxy for the secret: on a repository where no key has been configured the T1
+# job ran anyway, the suite's own guard correctly refused, and the job went red
+# on every push. A tier that cannot run should skip, not fail, or people learn to
+# ignore CI. So the event condition now does what it is actually good for -- not
+# spending a runner on an unlabelled fork PR -- and the secret itself decides
+# whether T1 does any work.
+#
+# The split is the part that matters for safety: the keyless tier runs
+# everywhere, including on pull requests from forks, because it needs no secret.
+# The model tier only does work where the key exists, so a fork PR can neither
+# exfiltrate it nor spend money.
 
 name: ci
 
@@ -57,8 +67,9 @@ jobs:
   t1:
     name: T1 (model tier)
     needs: t0
-    # Only where the secret exists: the default branch, a labelled PR, or the
-    # nightly run. Never on an unlabelled fork PR.
+    # A cost gate, not the key gate: do not start a runner for an unlabelled
+    # fork PR. Whether there is a key to use is decided in the first step,
+    # because the `secrets` context is not available in a job-level `if`.
     if: >
       github.event_name == 'schedule' ||
       github.event_name == 'push' ||
@@ -71,9 +82,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The key is read through the environment and only its emptiness is
+      # tested, so the value itself never reaches a command line or a log.
+      - name: Is a key configured?
+        id: key
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=model tier skipped::no ANTHROPIC_API_KEY secret is configured on this repository, so the model tier has nothing to run. The keyless tier covers everything that does not need a model."
+          fi
+
       - uses: docker/setup-buildx-action@v3
+        if: steps.key.outputs.present == 'true'
 
       - name: Build image
+        if: steps.key.outputs.present == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -82,6 +109,7 @@ jobs:
           cache-from: type=gha
 
       - name: Run model tier
+        if: steps.key.outputs.present == 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           # The slow characterization tests only on the nightly run.

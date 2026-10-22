@@ -556,8 +556,8 @@ path T0 — free and fully deterministic. Feasibility and risk in `DET-15`.
 | RDY-20 | cancellation on interrupt — characterize | T1 | plan |
 | RDY-21 | logging notifications — characterize | T0 | plan |
 | RDY-22 | version matrix: green on the pin, diffs reported on newer versions | — | plan |
-| RDY-23 | image builds and suite passes on arm64 and amd64 | — | plan |
-| RDY-24 | one command from a clean clone with only Docker, git and the key | — | impl (verified by running it; no self-test) |
+| RDY-23 | image builds and suite passes on arm64 and amd64 | — | impl (verified: arm64 locally, amd64 on an `ubuntu-latest` runner, T0 green in 3m14s cold) |
+| RDY-24 | one command from a clean clone with only Docker, git and the key | — | impl (verified: fresh `git clone` of the public remote, no key, green in 34s; no self-test) |
 
 ---
 
@@ -581,7 +581,7 @@ properties of the harness rather than as test cases. Q5 ships the conformance
 matrix plus spot tests for the claims that would most embarrass a release —
 isolation, process leaks, permission gating, secret hygiene.
 
-**Row counts.** 153 items specified, 88 implemented (27 of those also executed against the real client and marked `impl (verified)`), 65 still `plan`. That ratio is only
+**Row counts.** 153 items specified, 89 implemented (28 of those also executed against the real client and marked `impl (verified)`), 64 still `plan`. That ratio is only
 achievable because of two architectural choices, and it is worth being explicit
 about why it is not over-promising:
 
@@ -589,10 +589,12 @@ about why it is not over-promising:
    CONN-10/11/12/18/36 and TOOL-01…07 simultaneously — they are independent
    assertions over one recorded transcript, not independent runs.
 2. **A fault is a table row, not a new test.** Because the instrument takes
-   `-mode`, Q3's 27 implemented rows are substantially *one* Go table-driven
-   test with 27 entries. Adding the 28th fault is three lines.
+   `-mode`, Q3's 28 implemented rows come down to two Go table-driven tests —
+   15 entries keyless, 7 at the model tier — plus a handful of standalone cases
+   that need their own setup. Adding the next fault is a mode in the registry
+   and a three-line table row.
 
-In test-function terms the implemented set is roughly 30 functions. Grouping is
+In test-function terms the implemented set is 32 top-level test functions (5 + 16 keyless, 11 at the model tier), expanding to 37 keyless cases and 17 model-tier cases once the tables are enumerated. Grouping is
 by session cost, not by inventory row. The status column is reconciled against
 the finished suite before submission — anything that did not actually land gets
 demoted to `plan` rather than left optimistic.
