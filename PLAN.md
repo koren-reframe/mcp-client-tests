@@ -444,7 +444,7 @@ properties of the harness rather than as test cases. Q5 ships the conformance
 matrix plus spot tests for the claims that would most embarrass a release —
 isolation, process leaks, permission gating, secret hygiene.
 
-**Row counts.** 151 items specified, 106 implemented. That ratio is only
+**Row counts.** 151 items specified, 105 implemented. That ratio is only
 achievable because of two architectural choices, and it is worth being explicit
 about why it is not over-promising:
 
