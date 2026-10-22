@@ -322,9 +322,9 @@ worth.
    transcript, every CLI invocation and the test environment; the step is wired
    with `if: failure()` and correctly skipped on the green run.
 3. **Layer caching.** `docker/build-push-action` with `cache-from`/`cache-to:
-   type=gha`. The first run paid the cold build and populated the cache; because
-   `CLAUDE_VERSION` is pinned, that layer — almost all of the image — is stable
-   until the pin moves.
+   type=gha`. The first run paid the cold build at 3m14s and populated the
+   cache; the next run came in at **1m35s**. Because `CLAUDE_VERSION` is pinned,
+   that layer — almost all of the image — is stable until the pin moves.
 4. **Architecture.** `RDY-23` existed because the image is developed on `arm64`
    while runners are `amd64`, and "the base images are multi-arch so it should
    work" is not evidence. It built and passed on `amd64` on the first try.
@@ -339,10 +339,12 @@ worth.
    `DET-06`/`DET-07` compute a pass rate, T1 reports rather than gates. The
    honest version is a nightly `FLAKE_RUNS=10 ./run.sh flake` whose rate is
    tracked over time, with a threshold agreed before it becomes a gate.
-3. **One run of T1 in CI.** It has run locally but never on a runner, since this
-   repository has no key configured. Until it does, the CI half of the model tier
-   is unproven — which is exactly the claim this section got wrong the first
-   time, so it is stated rather than assumed.
+3. **One real run of T1 in CI.** Its *skip* path is confirmed — with no key
+   configured the job checks out, reads the secret, finds nothing and skips the
+   rest, green. The path that builds the image and spends money has only ever
+   run locally. Until a key exists on some repository, the CI half of the model
+   tier is unproven, which is exactly the kind of claim this section got wrong
+   the first time, so it is stated rather than assumed.
 
 ## Repo layout
 
