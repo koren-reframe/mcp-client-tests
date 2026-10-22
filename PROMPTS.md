@@ -31,6 +31,20 @@ Chosen for static dependency-free fixture binaries, native `-count=N` flake
 measurement and `-shuffle=on` order independence, and `t.TempDir()` per-test
 hermeticity.
 
+## 4 — Harness implementation
+
+> looks good, let's proceed with building the harness. Implement
+> cmd/fixture-mcp, the Dockerfile, and run.sh. Make sure we support stdio/SSE,
+> and the -mode flag ready for fault injection (and dont froget server/discover
+> probe also make sure run.sh defaults to running T0 headlessly without an api
+> key, then do a quick smoke test against claude mcp list to verify the
+> baseline
+
+Produced `cmd/fixture-mcp` (stdio, streamable HTTP and legacy SSE transports,
+38 named fault modes, NDJSON frame recorder, OAuth discovery endpoints),
+`internal/transcript`, `internal/harness`, `tests/protocol/baseline_test.go`,
+the `Dockerfile`, `scripts/suite` and `run.sh`.
+
 ## Method notes
 
 - Recon preceded planning: `claude --help`, `claude mcp --help` and every `mcp`

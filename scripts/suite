@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# Entry point inside the image. Maps a tier name to a go test invocation.
+set -euo pipefail
+
+TARGET="${1:-t0}"
+shift || true
+cd /suite
+mkdir -p "${ARTIFACT_DIR:-/artifacts}"
+
+need_key() {
+  if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+    echo "error: target '$TARGET' needs the model and no ANTHROPIC_API_KEY is set." >&2
+    echo "       The default target (t0) needs no key: ./run.sh" >&2
+    exit 2
+  fi
+}
+
+# -shuffle=on proves order independence (DET-13) on every run rather than as a
+# separate test. -count=1 defeats Go's result caching, which would otherwise
+# hide a flaky client behind a cached pass.
+case "$TARGET" in
+  t0|protocol)
+    echo "== T0: protocol tier (no model, no API key) =="
+    exec go test -count=1 -shuffle=on -timeout 20m ./tests/protocol/... "$@"
+    ;;
+  smoke)
+    echo "== smoke: version pin and baseline handshake =="
+    exec go test -count=1 -v -timeout 5m -run 'TestCONN39_VersionPin|TestCONN40_BaselineHandshake' ./tests/protocol/... "$@"
+    ;;
+  t1|model)
+    need_key
+    echo "== T1: model tier (spends tokens) =="
+    exec go test -tags=model -count=1 -timeout 30m ./tests/... "$@"
+    ;;
+  all)
+    need_key
+    echo "== T0 then T1 =="
+    go test -count=1 -shuffle=on -timeout 20m ./tests/protocol/...
+    exec go test -tags=model -count=1 -timeout 30m ./tests/... "$@"
+    ;;
+  flake)
+    # DET-06: report a rate over repeated runs rather than a binary pass.
+    need_key
+    N="${FLAKE_RUNS:-5}"
+    echo "== flake: $N repeats of the model tier =="
+    exec go test -tags=model -count="$N" -timeout 60m ./tests/... "$@"
+    ;;
+  modes)
+    exec fixture-mcp -list-modes
+    ;;
+  version)
+    claude --version
+    exec go version
+    ;;
+  shell)
+    exec bash
+    ;;
+  *)
+    cat >&2 <<USAGE
+usage: run.sh [target]
+
+  t0       protocol tier, no model, no API key required   (default)
+  smoke    version pin + baseline handshake, verbose
+  t1       model tier, needs ANTHROPIC_API_KEY
+  all      t0 then t1
+  flake    repeat the model tier FLAKE_RUNS times (default 5)
+  modes    list the fixture's fault injection catalogue
+  version  print claude and go versions
+  shell    interactive shell in the image
+USAGE
+    exit 2
+    ;;
+esac
